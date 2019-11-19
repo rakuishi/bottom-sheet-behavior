@@ -1,22 +1,20 @@
 package com.rakuishi.bottomsheetbehavior
 
-import android.annotation.SuppressLint
-import android.content.Context
-import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
-import android.view.ViewGroup
 import androidx.annotation.IntDef
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.core.view.ViewCompat
 import androidx.customview.widget.ViewDragHelper
 import java.lang.ref.WeakReference
 import kotlin.math.abs
-import kotlin.math.absoluteValue
 
-// https://github.com/google/iosched/blob/master/mobile/src/main/java/com/google/samples/apps/iosched/widget/BottomSheetBehavior.kt
-class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
+// This code is based on https://github.com/google/iosched/blob/master/mobile/src/main/java/com/google/samples/apps/iosched/widget/BottomSheetBehavior.kt
+// But original code has a bug around CoordinatorLayout's height
+// ViewDragHelper.Callback, onInterceptTouchEvent and onTouchEvent are changed by using following behavior
+// https://github.com/material-components/material-components-android/blob/master/lib/java/com/google/android/material/bottomsheet/BottomSheetBehavior.java
+class MyBottomSheetBehavior<V : View>(var collapsedHeight: Int) : CoordinatorLayout.Behavior<V>() {
 
     companion object {
         /** The bottom sheet is dragging. */
@@ -84,26 +82,19 @@ class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
     private lateinit var dragHelper: ViewDragHelper
 
     // Touch event handling, etc
-    private var lastTouchX = 0
-    private var lastTouchY = 0
     private var initialTouchY = 0
     private var parentHeight = 0
     private var activePointerId = MotionEvent.INVALID_POINTER_ID
     private var acceptTouches = true
-    private var minimumVelocity = 0
     private var velocityTracker: VelocityTracker? = null
 
-    var collapsedHeight = 0
+    // heights are changed by external
     var halfExpandedHeight = 0
     var expandedHeight = 0
 
-    constructor(collapsedHeight: Int) : super() {
-        this.collapsedHeight = collapsedHeight
+    init {
         setStateInternal(STATE_COLLAPSED)
     }
-
-    @SuppressLint("PrivateResource")
-    constructor(context: Context, attrs: AttributeSet?) : super(context, attrs)
 
     // region Layout
 
@@ -148,43 +139,7 @@ class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
                 dragHelper.viewDragState == ViewDragHelper.STATE_SETTLING -> return true
             }
 
-            val dy = lastTouchY - initialTouchY
-            if (dy == 0) {
-                // ViewDragHelper tries to capture in onTouch for the ACTION_DOWN event, but there's
-                // really no way to check for a scrolling child without a direction, so wait.
-                return false
-            }
-
-            if (state == STATE_COLLAPSED) {
-                if (dy < 0) {
-                    // Expand on upward movement, even if there's scrolling content underneath
-                    return true
-                }
-            }
-
-            // Check for scrolling content underneath the touch point that can scroll in the
-            // appropriate direction.
-            val scrollingChild = findScrollingChildUnder(child, lastTouchX, lastTouchY, -dy)
-            return scrollingChild == null
-        }
-
-        private fun findScrollingChildUnder(view: View, x: Int, y: Int, direction: Int): View? {
-            if (view.visibility == View.VISIBLE && dragHelper.isViewUnder(view, x, y)) {
-                if (view.canScrollVertically(direction)) {
-                    return view
-                }
-                if (view is ViewGroup) {
-                    for (i in (view.childCount - 1) downTo 0) {
-                        val child = view.getChildAt(i)
-                        val found =
-                            findScrollingChildUnder(child, x - child.left, y - child.top, direction)
-                        if (found != null) {
-                            return found
-                        }
-                    }
-                }
-            }
-            return null
+            return viewRef != null && viewRef?.get() == child
         }
 
         override fun getViewVerticalDragRange(child: View): Int {
@@ -218,52 +173,41 @@ class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
     }
 
     private fun settleBottomSheet(sheet: View, yVelocity: Float) {
-        val top: Int
         @State val targetState: Int
         val collapsedOffset = parentHeight - collapsedHeight
         val halfExpandedOffset = parentHeight - halfExpandedHeight
-        val expandedOffset = parentHeight - expandedHeight
+        val currentTop = sheet.top
 
-        val flinging = yVelocity.absoluteValue > minimumVelocity
-        if (flinging && yVelocity < 0) { // Moving up
-            if (sheet.top > halfExpandedOffset) {
-                top = halfExpandedOffset
-                targetState = STATE_HALF_EXPANDED
-            } else {
-                top = expandedOffset
-                targetState = STATE_EXPANDED
-            }
-        } else if (flinging && yVelocity > 0) { // Moving down
-            top = collapsedOffset
-            targetState = STATE_COLLAPSED
-        } else {
-            val currentTop = sheet.top
-            if (currentTop < halfExpandedOffset) {
-                if (currentTop < abs(currentTop - collapsedOffset)) {
-                    top = expandedOffset
-                    targetState = STATE_EXPANDED
+        when {
+            yVelocity < 0 -> // Moving up
+                targetState = if (currentTop > halfExpandedOffset) {
+                    STATE_HALF_EXPANDED
                 } else {
-                    top = halfExpandedOffset
-                    targetState = STATE_HALF_EXPANDED
+                    STATE_EXPANDED
+                }
+            yVelocity > 0 -> // Moving down
+                targetState =
+                    if (abs(currentTop - halfExpandedOffset) < abs(currentTop - collapsedOffset)) {
+                        STATE_HALF_EXPANDED
+                    } else {
+                        STATE_COLLAPSED
+                    }
+            else -> targetState = if (currentTop < halfExpandedOffset) {
+                if (currentTop < abs(currentTop - collapsedOffset)) {
+                    STATE_EXPANDED
+                } else {
+                    STATE_HALF_EXPANDED
                 }
             } else {
                 if (abs(currentTop - halfExpandedOffset) < abs(currentTop - collapsedOffset)) {
-                    top = halfExpandedOffset
-                    targetState = STATE_HALF_EXPANDED
+                    STATE_HALF_EXPANDED
                 } else {
-                    top = collapsedOffset
-                    targetState = STATE_COLLAPSED
+                    STATE_COLLAPSED
                 }
             }
         }
 
-        val startedSettling = dragHelper.settleCapturedViewAt(sheet.left, top)
-        if (startedSettling) {
-            setStateInternal(STATE_SETTLING)
-            ViewCompat.postOnAnimation(sheet, SettleRunnable(sheet, targetState))
-        } else {
-            setStateInternal(targetState)
-        }
+        startSettlingAnimation(sheet, targetState)
     }
 
     // endregion
@@ -323,8 +267,10 @@ class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
             return true
         }
 
-        lastTouchX = event.x.toInt()
-        lastTouchY = event.y.toInt()
+        // CoordinatorLayout can call us before the view is laid out. >_<
+        if (::dragHelper.isInitialized) {
+            dragHelper.processTouchEvent(event)
+        }
 
         // Record velocity
         if (action == MotionEvent.ACTION_DOWN) {
@@ -335,14 +281,9 @@ class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
         }
         velocityTracker?.addMovement(event)
 
-        // CoordinatorLayout can call us before the view is laid out. >_<
-        if (::dragHelper.isInitialized) {
-            dragHelper.processTouchEvent(event)
-        }
-
         if (acceptTouches &&
             action == MotionEvent.ACTION_MOVE &&
-            exceedsTouchSlop(initialTouchY, lastTouchY)
+            exceedsTouchSlop(initialTouchY, event.y.toInt())
         ) {
             // Manually capture the sheet since nothing beneath us is scrolling.
             dragHelper.captureChildView(child, event.getPointerId(event.actionIndex))
@@ -370,8 +311,6 @@ class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
         }
 
         val action = event.actionMasked
-        lastTouchX = event.x.toInt()
-        lastTouchY = event.y.toInt()
 
         // Record velocity
         if (action == MotionEvent.ACTION_DOWN) {
@@ -395,10 +334,8 @@ class MyBottomSheetBehavior<V : View> : CoordinatorLayout.Behavior<V> {
                 activePointerId = event.getPointerId(event.actionIndex)
                 initialTouchY = event.y.toInt()
 
-                if (!parent.isPointInChildBounds(child, lastTouchX, initialTouchY)) {
-                    // Not touching the sheet
-                    acceptTouches = false
-                }
+                acceptTouches = !(activePointerId == MotionEvent.INVALID_POINTER_ID
+                        && !parent.isPointInChildBounds(child, event.x.toInt(), initialTouchY))
             }
         }
 
