@@ -16,6 +16,11 @@ import kotlin.math.abs
 // https://github.com/material-components/material-components-android/blob/master/lib/java/com/google/android/material/bottomsheet/BottomSheetBehavior.java
 class MyBottomSheetBehavior<V : View>(var collapsedHeight: Int) : CoordinatorLayout.Behavior<V>() {
 
+    interface Callback {
+        // Called when the bottom sheet is being dragged.
+        fun onStateChanged(@State state: Int)
+    }
+
     companion object {
         /** The bottom sheet is dragging. */
         const val STATE_DRAGGING = 1
@@ -73,6 +78,7 @@ class MyBottomSheetBehavior<V : View>(var collapsedHeight: Int) : CoordinatorLay
     private fun setStateInternal(@State state: Int) {
         if (_state != state) {
             _state = state
+            callback?.onStateChanged(state)
         }
     }
 
@@ -91,6 +97,7 @@ class MyBottomSheetBehavior<V : View>(var collapsedHeight: Int) : CoordinatorLay
     // heights are changed by external
     var halfExpandedHeight = 0
     var expandedHeight = 0
+    var callback: Callback? = null
 
     init {
         setStateInternal(STATE_COLLAPSED)
@@ -99,9 +106,8 @@ class MyBottomSheetBehavior<V : View>(var collapsedHeight: Int) : CoordinatorLay
     // region Layout
 
     override fun onLayoutChild(parent: CoordinatorLayout, child: V, layoutDirection: Int): Boolean {
-        parent.onLayoutChild(child, layoutDirection)
-
         val savedTop = child.top
+        parent.onLayoutChild(child, layoutDirection)
         parentHeight = parent.height
 
         // Offset the bottom sheet
@@ -161,10 +167,7 @@ class MyBottomSheetBehavior<V : View>(var collapsedHeight: Int) : CoordinatorLay
         }
 
         override fun onViewPositionChanged(child: View, left: Int, top: Int, dx: Int, dy: Int) {
-            viewRef?.get()?.let { _ ->
-                val collapsedOffset = parentHeight - collapsedHeight
-                parentHeight - collapsedOffset
-            }
+            /* do nothing */
         }
 
         override fun onViewReleased(releasedChild: View, xvel: Float, yvel: Float) {
